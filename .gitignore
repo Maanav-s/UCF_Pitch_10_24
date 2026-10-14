@@ -1,0 +1,14 @@
+# Vivado generated output (rebuilt from the .xpr and .srcs)
+*.cache/
+*.hw/
+*.ip_user_files/
+*.sim/
+*.runs/
+*.gen/
+.Xil/
+
+# Vivado logs and journals
+*.jou
+*.log
+*.str
+*.backup.*
