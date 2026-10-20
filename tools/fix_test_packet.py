@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Build the standard FIX test packet (market data) and its expected reply (buy).
+
+Both are UDP datagrams between the fixed §3 identities:
+  exchange (board 1, W5500-X)  02:00:00:00:00:02  192.168.10.2:5000
+  trader   (board 2, W5500-T)  02:00:00:00:00:01  192.168.10.1:5000
+
+Market data: AAPL offered (269=1) at $100.00, qty 100.
+Reply:       NewOrderSingle buy (54=1) AAPL, limit $100.00, qty 100.
+
+FIX framing is tag=value with SOH (0x01) delimiters. Every value has a fixed
+width (leading zeros are legal in FIX int/price fields), so every field sits at
+a constant byte offset and the FPGA can parse it the same way as a binary
+message. BodyLength (9) and CheckSum (10) are computed here.
+
+Usage:
+  fix_test_packet.py                 print annotated hex dumps
+  fix_test_packet.py --out DIR       also write .mem/.bin files to DIR
+"""
+import argparse
+import os
+import struct
+import zlib
+
+SOH = b"\x01"
+
+EXCH_MAC = bytes.fromhex("020000000002")
+TRDR_MAC = bytes.fromhex("020000000001")
+EXCH_IP = bytes([192, 168, 10, 2])
+TRDR_IP = bytes([192, 168, 10, 1])
+PORT = 5000
+
+
+def fix_msg(body_fields):
+    """Wrap (tag, value) pairs with 8=, 9= and 10=."""
+    body = b"".join(f"{t}={v}".encode() + SOH for t, v in body_fields)
+    head = b"8=FIX.4.4" + SOH + f"9={len(body):03d}".encode() + SOH
+    cks = sum(head + body) % 256
+    return head + body + f"10={cks:03d}".encode() + SOH
+
+
+def market_data(seq=1, ticker="AAPL", price="0100.00", qty=100):
+    return fix_msg([
+        (35, "X"),            # MsgType = Market Data Incremental Refresh
+        (34, f"{seq:05d}"),   # MsgSeqNum
+        (55, f"{ticker:<4}"), # Symbol
+        (269, "1"),           # MDEntryType = Offer (ask)
+        (270, price),         # MDEntryPx
+        (271, f"{qty:05d}"),  # MDEntrySize
+    ])
+
+
+def buy_order(seq=1, ticker="AAPL", price="0100.00", qty=100):
+    return fix_msg([
+        (35, "D"),            # MsgType = New Order Single
+        (34, f"{seq:05d}"),   # MsgSeqNum (trader's own)
+        (11, f"{seq:05d}"),   # ClOrdID = seq of the market data it answers
+        (55, f"{ticker:<4}"), # Symbol
+        (54, "1"),            # Side = Buy
+        (38, f"{qty:05d}"),   # OrderQty
+        (40, "2"),            # OrdType = Limit
+        (44, price),          # Price
+    ])
+
+
+def csum16(data):
+    if len(data) % 2:
+        data += b"\x00"
+    s = sum(struct.unpack(f"!{len(data) // 2}H", data))
+    while s >> 16:
+        s = (s & 0xFFFF) + (s >> 16)
+    return ~s & 0xFFFF
+
+
+def frame(src_mac, dst_mac, src_ip, dst_ip, payload):
+    udp_len = 8 + len(payload)
+    pseudo = src_ip + dst_ip + struct.pack("!BBH", 0, 17, udp_len)
+    udp = struct.pack("!HHHH", PORT, PORT, udp_len, 0) + payload
+    udp_ck = csum16(pseudo + udp) or 0xFFFF
+    udp = udp[:6] + struct.pack("!H", udp_ck) + udp[8:]
+
+    ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + udp_len, 0, 0, 64, 17, 0,
+                     src_ip, dst_ip)
+    ip = ip[:10] + struct.pack("!H", csum16(ip)) + ip[12:]
+
+    eth = dst_mac + src_mac + b"\x08\x00" + ip + udp
+    eth += b"\x00" * max(0, 60 - len(eth))
+    fcs = struct.pack("<I", zlib.crc32(eth))  # transmitted LSB first
+    return eth + fcs, ip, udp
+
+
+def show_fix(name, msg):
+    print(f"--- {name} FIX payload ({len(msg)} bytes) ---")
+    print("  " + msg.replace(SOH, b"|").decode())
+    off = 0
+    for f in msg.split(SOH)[:-1]:
+        tag, _, val = f.decode().partition("=")
+        print(f"  off {off:3d}  len {len(f) + 1:2d}  {tag:>4}={val}")
+        off += len(f) + 1
+
+
+def hexdump(data, indent="  "):
+    for i in range(0, len(data), 16):
+        chunk = data[i:i + 16]
+        hx = " ".join(f"{b:02x}" for b in chunk)
+        asc = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
+        print(f"{indent}{i:04x}  {hx:<47}  {asc}")
+
+
+def write_mem(path, data):
+    with open(path, "w") as f:
+        f.write("".join(f"{b:02x}\n" for b in data))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--out", help="directory for .mem/.bin output")
+    a = ap.parse_args()
+
+    md = market_data()
+    rp = buy_order()
+    md_frame, md_ip, md_udp = frame(EXCH_MAC, TRDR_MAC, EXCH_IP, TRDR_IP, md)
+    rp_frame, rp_ip, rp_udp = frame(TRDR_MAC, EXCH_MAC, TRDR_IP, EXCH_IP, rp)
+
+    for name, msg, fr, ip, udp in (("Market data", md, md_frame, md_ip, md_udp),
+                                   ("Reply", rp, rp_frame, rp_ip, rp_udp)):
+        show_fix(name, msg)
+        print(f"  IPv4 checksum 0x{ip[10:12].hex()}  UDP checksum 0x{udp[6:8].hex()}"
+              f"  FCS (wire order) {fr[-4:].hex()}")
+        print(f"--- {name} Ethernet frame ({len(fr)} bytes, no preamble) ---")
+        hexdump(fr)
+        print()
+
+    if a.out:
+        os.makedirs(a.out, exist_ok=True)
+        for stem, data in (("fix_md_payload", md), ("fix_reply_payload", rp),
+                           ("fix_md_frame", md_frame), ("fix_reply_frame", rp_frame)):
+            write_mem(os.path.join(a.out, stem + ".mem"), data)
+            with open(os.path.join(a.out, stem + ".bin"), "wb") as f:
+                f.write(data)
+        print(f"wrote .mem/.bin files to {a.out}")
+
+
+if __name__ == "__main__":
+    main()
