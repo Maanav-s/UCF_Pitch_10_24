@@ -104,19 +104,22 @@ module tb_rmii;
   int n_valid  = 0;  // rx_valid strobes since clear_rx
   int n_eof    = 0;  // rx_eof strobes since clear_rx
   int last_len = 0;
+  int exp_off  = 0;  // next rx_offset expected in the current frame
 
   always @(posedge clk) begin
     if (rx_valid) begin
-      if (rx_offset != n_valid) begin
-        $display("ERROR %0t: rx_offset %0d, expected %0d", $time, rx_offset, n_valid);
+      if (rx_offset != exp_off) begin
+        $display("ERROR %0t: rx_offset %0d, expected %0d", $time, rx_offset, exp_off);
         errors++;
       end
       got[rx_offset] = rx_data;
       n_valid++;
+      exp_off++;
     end
     if (rx_eof) begin
       last_len = rx_len;
       n_eof++;
+      exp_off = 0;
     end
   end
 
@@ -155,6 +158,7 @@ module tb_rmii;
   task automatic clear_rx();
     n_valid  = 0;
     n_eof    = 0;
+    exp_off  = 0;
     last_len = 0;
     for (int i = 0; i < 2048; i++) got[i] = 'x;
   endtask
