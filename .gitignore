@@ -12,3 +12,6 @@
 *.log
 *.str
 *.backup.*
+
+# Script build output
+build/
