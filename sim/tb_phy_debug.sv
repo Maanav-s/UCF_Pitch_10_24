@@ -13,7 +13,7 @@ module tb_phy_debug;
     wire  [15:0] led;
     wire  [6:0]  seg;
     wire  [3:0]  an;
-    wire         dp, mdc, tx_en, txd0, txd1;
+    wire         dp, mdc, tx_en, txd0, txd1, selftest_clk;
     tri1         mdio;                        // pull-up, as on the board
 
     phy_debug_top #(
@@ -35,6 +35,7 @@ module tb_phy_debug;
         .rmii_tx_en   (tx_en),
         .rmii_txd0    (txd0),
         .rmii_txd1    (txd1),
+        .selftest_clk (selftest_clk),
         .mdc          (mdc),
         .mdio         (mdio)
     );
@@ -67,7 +68,7 @@ module tb_phy_debug;
         check(dut.r_smr  == 16'h6001,   "reg 18 = 6001 (MODE 000)");
 
         // Two full measurement windows have passed by 3.3 ms.
-        wait ($time > 3_300_000);
+        while ($time < 3_300_000) @(posedge clk);
         check(dut.ref_mhz_bcd inside {16'h4999, 16'h5000, 16'h5001}, "REF_CLK reads 50.00 MHz");
         check(led[3],                   "REF_CLK LED on");
 

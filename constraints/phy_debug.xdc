@@ -57,6 +57,9 @@ set_property -dict {PACKAGE_PIN A15 IOSTANDARD LVCMOS33}             [get_ports 
 set_property -dict {PACKAGE_PIN A17 IOSTANDARD LVCMOS33}             [get_ports rmii_txd0]
 set_property -dict {PACKAGE_PIN C15 IOSTANDARD LVCMOS33}             [get_ports rmii_txd1]
 
+## Self-test: 25 MHz out on JB[7] (JB pin 10), to be jumpered to JB pin 1
+set_property -dict {PACKAGE_PIN C16 IOSTANDARD LVCMOS33}             [get_ports selftest_clk]
+
 ## MDIO on JC (debug only; the spec's run C leaves MDIO unconnected)
 set_property -dict {PACKAGE_PIN K17 IOSTANDARD LVCMOS33}             [get_ports mdc]
 set_property -dict {PACKAGE_PIN M18 IOSTANDARD LVCMOS33 PULLUP true} [get_ports mdio]

@@ -11,6 +11,10 @@
 // The RMII TX pins are held low. CRS_DV, RXD0 and RXD1 are inputs with
 // pull-ups in the XDC, so the FPGA leaves the mode straps at 111.
 //
+// Self-test: JB[7] outputs a 25 MHz clock (clk / 4). Jumper JB pin 10 to
+// JB pin 1 in place of the module's clock and SW = 111 should read 25.00,
+// which proves the REF_CLK measurement path independently of the module.
+//
 // 7-segment display, selected by SW[2:0] ("----" until the PHY answers):
 //   000  reg 2  PHY ID 1                 expect 0007
 //   001  reg 3  PHY ID 2                 expect C0Fx (LAN8720A: C0F1)
@@ -50,6 +54,7 @@ module phy_debug_top #(
     output logic        rmii_tx_en,             // JB[4]
     output logic        rmii_txd0,              // JB[5]
     output logic        rmii_txd1,              // JB[6]
+    output logic        selftest_clk,           // JB[7], 25 MHz loopback source
     // Management interface, debug only
     output logic        mdc,                    // JC[0]
     inout  wire         mdio                    // JC[1]
@@ -59,6 +64,13 @@ module phy_debug_top #(
     assign rmii_tx_en = 1'b0;
     assign rmii_txd0  = 1'b0;
     assign rmii_txd1  = 1'b0;
+
+    logic [1:0] selftest_div = '0;
+
+    always_ff @(posedge clk)
+        selftest_div <= selftest_div + 1;
+
+    assign selftest_clk = selftest_div[1];
 
     // ---------------------------------------------------------------- reset
     logic [3:0] por_cnt = '0;
@@ -114,20 +126,24 @@ module phy_debug_top #(
     xpm_cdc_single #(.DEST_SYNC_FF(2), .INIT_SYNC_FF(1), .SRC_INPUT_REG(1)) u_rxdata_sync (
         .src_clk (rmii_ref_clk), .src_in (rxdata_r), .dest_clk (clk), .dest_out (rxdata_s));
 
+    // Works on a local copy: Vivado synthesis ignores assignments to a
+    // function's input argument (Synth 8-6104), though simulators honor them.
     function automatic logic [15:0] bcd_inc(input logic [15:0] v);
-        logic carry;
+        logic [15:0] r;
+        logic        carry;
+        r     = v;
         carry = 1'b1;
         for (int d = 0; d < 4; d++) begin
             if (carry) begin
-                if (v[4*d +: 4] == 4'd9) begin
-                    v[4*d +: 4] = 4'd0;
+                if (r[4*d +: 4] == 4'd9) begin
+                    r[4*d +: 4] = 4'd0;
                 end else begin
-                    v[4*d +: 4] = v[4*d +: 4] + 1;
+                    r[4*d +: 4] = r[4*d +: 4] + 1;
                     carry       = 1'b0;
                 end
             end
         end
-        return v;
+        return r;
     endfunction
 
     // One rising edge of ref_div[3] every 16 REF_CLK cycles, so the count over
