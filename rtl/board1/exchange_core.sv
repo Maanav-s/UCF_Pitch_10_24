@@ -24,7 +24,14 @@
 // Control:
 //   send       pulse: send the market data once, when idle.
 //   auto_send  level: send again GAP_CLKS after each reply or timeout.
-//   clear      pulse: clear the statistics.
+//   clear      pulse: clear the statistics and abort a run.
+//   run_start  pulse: start a run. When the exchange is next idle it clears
+//              the statistics (stats_clear) and then sends exactly RUN_LEN
+//              times, GAP_CLKS apart.
+//   hold       level: start no new send (used while the UART dump runs).
+//
+// Every send ends in exactly one lat_valid or timed_out pulse, so a sample
+// log fed by those two pulses gets one entry per send.
 
 module exchange_core
   import fix_packets_pkg::*;
@@ -33,7 +40,8 @@ module exchange_core
   parameter int TIMEOUT_CLKS = 500_000,  // 10 ms
   parameter int GAP_CLKS     = 50_000,   // 1 ms between automatic sends
   parameter bit EXACT_MATCH  = 1'b0,
-  parameter bit TX_NEGEDGE   = 1'b0
+  parameter bit TX_NEGEDGE   = 1'b0,
+  parameter int RUN_LEN      = 4096
 ) (
   input  logic        clk,
   input  logic        rst,
@@ -41,6 +49,8 @@ module exchange_core
   input  logic        send,
   input  logic        auto_send,
   input  logic        clear,
+  input  logic        run_start,
+  input  logic        hold,
 
   input  logic        rmii_crs_dv,
   input  logic [1:0]  rmii_rxd,
@@ -49,6 +59,10 @@ module exchange_core
 
   output logic        waiting,       // timer running: sent, no reply yet
   output logic        lat_valid,     // pulse: lat_last updated
+  output logic        timed_out,     // pulse: a send timed out
+  output logic        stats_clear,   // pulse: statistics cleared (clear or run start)
+  output logic        run_active,    // a run is in progress
+  output logic        run_done,      // the last run completed (until clear)
   output logic [31:0] lat_last,      // ticks
   output logic [31:0] lat_min,       // 0xFFFFFFFF until the first reply
   output logic [31:0] lat_max,
@@ -109,6 +123,14 @@ module exchange_core
   state_t      state;
   logic [10:0] idx;      // next MD_FRAME byte to hand to rmii_tx
   logic [31:0] gap_cnt;
+  logic        run_req;  // run_start seen, waiting for idle
+  logic [31:0] run_cnt;  // sends started in this run
+
+  wire run_go   = run_req && state == S_IDLE && !hold;
+  wire run_more = run_active && run_cnt != 32'(RUN_LEN);
+  wire clr      = clear || run_go;
+
+  assign stats_clear = clr;
 
   assign tx_valid = (state == S_SEND);
   assign tx_data  = MD_FRAME[idx < MD_FRAME_LEN ? idx : 11'd0];
@@ -123,15 +145,39 @@ module exchange_core
 
   always_ff @(posedge clk) begin
     if (rst) begin
-      state   <= S_IDLE;
-      idx     <= '0;
-      gap_cnt <= '0;
+      state      <= S_IDLE;
+      idx        <= '0;
+      gap_cnt    <= '0;
+      run_req    <= 1'b0;
+      run_cnt    <= '0;
+      run_active <= 1'b0;
+      run_done   <= 1'b0;
     end else begin
+      if (run_start)
+        run_req <= 1'b1;
+      if (clear) begin
+        run_req    <= 1'b0;
+        run_active <= 1'b0;
+        run_done   <= 1'b0;
+      end
       case (state)
         S_IDLE:
-          if (send || auto_send) begin
+          if (clear) begin
+            // stay idle
+          end else if (run_go) begin
+            run_req    <= 1'b0;
+            run_active <= 1'b1;
+            run_done   <= 1'b0;
+            run_cnt    <= '0;
+          end else if (run_active && !run_more) begin
+            // Back in idle after the last send's reply or timeout.
+            run_active <= 1'b0;
+            run_done   <= 1'b1;
+          end else if (!hold && (send || auto_send || run_more)) begin
             idx   <= '0;
             state <= S_SEND;
+            if (run_active)
+              run_cnt <= run_cnt + 32'd1;
           end
 
         S_SEND:
@@ -214,7 +260,8 @@ module exchange_core
 
   always_ff @(posedge clk) begin
     lat_valid <= 1'b0;
-    if (rst || clear) begin
+    timed_out <= 1'b0;
+    if (rst || clr) begin
       lat_last     <= '0;
       lat_min      <= '1;
       lat_max      <= '0;
@@ -238,6 +285,7 @@ module exchange_core
         last_ok   <= 1'b1;
       end
       if (t_timeout) begin
+        timed_out    <= 1'b1;
         n_timeouts   <= n_timeouts + 32'd1;
         last_timeout <= 1'b1;
       end

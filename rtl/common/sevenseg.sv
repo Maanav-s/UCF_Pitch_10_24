@@ -27,11 +27,15 @@ module sevenseg #(
   logic [3:0]  step;
   logic [29:0] nxt;   // {bcd, bin} after this step's add-3 and shift
 
+  // Works on a local copy: Vivado synthesis ignores assignments to a
+  // function's input argument (Synth 8-6104), though simulators honor them.
   function automatic logic [15:0] add3(input logic [15:0] b);
+    logic [15:0] r;
+    r = b;
     for (int d = 0; d < 4; d++)
-      if (b[4*d +: 4] >= 4'd5)
-        b[4*d +: 4] = b[4*d +: 4] + 4'd3;
-    return b;
+      if (r[4*d +: 4] >= 4'd5)
+        r[4*d +: 4] = r[4*d +: 4] + 4'd3;
+    return r;
   endfunction
 
   assign nxt = {add3(bcd), bin} << 1;

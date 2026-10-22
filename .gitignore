@@ -12,3 +12,6 @@
 *.log
 *.str
 *.backup.*
+
+# Python
+__pycache__/

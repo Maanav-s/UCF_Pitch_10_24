@@ -22,6 +22,11 @@ set_property IOB TRUE [get_ports {rmii_tx_en rmii_txd[*]}]
 ## Buttons
 set_property -dict {PACKAGE_PIN U18 IOSTANDARD LVCMOS33} [get_ports {btnC}]
 set_property -dict {PACKAGE_PIN T18 IOSTANDARD LVCMOS33} [get_ports {btnU}]
+set_property -dict {PACKAGE_PIN U17 IOSTANDARD LVCMOS33} [get_ports {btnD}]
+set_property -dict {PACKAGE_PIN T17 IOSTANDARD LVCMOS33} [get_ports {btnR}]
+
+## USB-UART (RsTx: FPGA -> PC)
+set_property -dict {PACKAGE_PIN A18 IOSTANDARD LVCMOS33} [get_ports {rs_tx}]
 
 ## Switches
 set_property -dict {PACKAGE_PIN V17 IOSTANDARD LVCMOS33} [get_ports {sw[0]}]
@@ -75,7 +80,7 @@ set_property -dict {PACKAGE_PIN W4 IOSTANDARD LVCMOS33} [get_ports {an[3]}]
 
 ## Buttons and switches are synchronized in the design; LEDs and the display
 ## are slow. None of them need I/O timing.
-set_false_path -from [get_ports {btnC btnU sw[*]}]
+set_false_path -from [get_ports {btnC btnU btnD btnR sw[*]}]
 set_false_path -to   [get_ports {led[*] seg[*] dp an[*]}]
 
 ## Configuration (Basys3)
