@@ -1,0 +1,5 @@
+runs: C:\Users\Maanav\Documents\Vivado\UCF_Pitch_10_24\runs\runA\runA.csv
+latency in us
+ run  label  samples  timeouts    min      p50      p90      p99    p99.9      max  max-min     mean   stdev
+runA      A     4096        51  55.00  1400.94  2066.17  5856.51  9658.52  9998.34  9943.34  1653.23  872.03
+runA: min=2750,max=499917,replies=4045,timeouts=51,other=7,stale=51

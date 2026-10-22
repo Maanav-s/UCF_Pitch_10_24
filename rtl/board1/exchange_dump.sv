@@ -61,7 +61,16 @@ module exchange_dump #(
   logic [7:0] loop_p;  // position after C_LOOP
   logic [7:0] c;
 
-  assign c = TPL[8 * (TPL_LEN - 1 - p) +: 8];
+  // Template ROM, written with constant indices only. A variable part-select
+  // of the wide TPL constant (TPL[8 * (TPL_LEN - 1 - p) +: 8]) crashed Vivado
+  // 2025.2 synthesis (access violation after constraint processing). Positions
+  // past the end read as C_END.
+  always_comb begin
+    c = C_END;
+    for (int i = 0; i < TPL_LEN; i++)
+      if (p == 8'(i))
+        c = TPL[8 * (TPL_LEN - 1 - i) +: 8];
+  end
 
   logic [31:0] val;
 

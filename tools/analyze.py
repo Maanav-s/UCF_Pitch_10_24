@@ -6,18 +6,22 @@ For each CSV: converts ticks to microseconds (tick_ns from the dump header,
 their count, and prints min, p50, p90, p99, p99.9, max, max - min, mean and
 standard deviation. The statistics need only the Python standard library.
 
-With matplotlib installed (python -m pip install matplotlib) it also saves,
-for all runs together:
-  <prefix>_hist.png    histograms, log-scale counts
-  <prefix>_cdf.png     cumulative distributions (latency percentile view)
-  <prefix>_series.png  latency against sample index (shows warm-up and spikes)
+A run is given by its name under runs/ (as written by capture.py), by its
+folder, or by a CSV file. Results go to an output folder:
+  one run       that run's folder, runs/<run>/
+  several runs  runs/compare_<run1>_<run2>.../ (or --out)
+holding report.txt (the table printed here) and, with matplotlib installed
+(python -m pip install matplotlib), for all the runs together:
+  latency_hist.png    histograms, log-scale counts
+  latency_cdf.png     cumulative distributions (latency percentile view)
+  latency_series.png  latency against sample index (shows warm-up and spikes)
 
 Usage:
-  python tools/analyze.py runA.csv runB.csv [runC.csv ...] [--prefix latency]
-         [--names "FPGA,USB laptop"] [--no-plots]
+  python tools/analyze.py runA [runB ...] [--names "FPGA,USB laptop"]
+         [--out DIR] [--no-plots]
 
-Each run is named after its file unless --names is given; the dump's run
-label (A-D, from SW[14:13]) is shown next to it.
+Each run is named after its folder (or CSV file) unless --names is given; the
+dump's run label (A-D, from SW[14:13]) is shown next to it.
 """
 import argparse
 import math
@@ -26,6 +30,25 @@ import statistics
 import sys
 
 TIMEOUT_TICKS = 0xFFFFFFFF
+RUNS_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         os.pardir, "runs"))
+
+
+def resolve(arg, runs_dir):
+    """Run name, run folder or CSV file -> (name, csv path, run folder)."""
+    for d in (arg, os.path.join(runs_dir, arg)):
+        if os.path.isdir(d):
+            name = os.path.basename(os.path.normpath(d))
+            csv = os.path.join(d, name + ".csv")
+            if not os.path.isfile(csv):
+                found = sorted(f for f in os.listdir(d) if f.endswith(".csv"))
+                if len(found) != 1:
+                    sys.exit(f"{d}: expected {name}.csv or a single CSV file")
+                csv = os.path.join(d, found[0])
+            return name, csv, d
+    if os.path.isfile(arg):
+        return os.path.splitext(os.path.basename(arg))[0], arg, os.path.dirname(arg) or "."
+    sys.exit(f"{arg}: not a run in {runs_dir}, a folder or a CSV file")
 
 
 def load(path):
@@ -61,7 +84,7 @@ def pct(sorted_us, p):
     return sorted_us[lo] + (sorted_us[hi] - sorted_us[lo]) * (k - lo)
 
 
-def report(runs):
+def report(runs, out=sys.stdout):
     cols = ["run", "label", "samples", "timeouts", "min", "p50", "p90", "p99",
             "p99.9", "max", "max-min", "mean", "stdev"]
     rows = []
@@ -76,16 +99,16 @@ def report(runs):
             cells = ["-"] * 9
         rows.append([name, r["label"], str(r["n"]), str(r["timeouts"])] + cells)
     widths = [max(len(c), *(len(row[i]) for row in rows)) for i, c in enumerate(cols)]
-    print("latency in us")
-    print("  ".join(c.rjust(w) for c, w in zip(cols, widths)))
+    print("latency in us", file=out)
+    print("  ".join(c.rjust(w) for c, w in zip(cols, widths)), file=out)
     for row in rows:
-        print("  ".join(c.rjust(w) for c, w in zip(row, widths)))
+        print("  ".join(c.rjust(w) for c, w in zip(row, widths)), file=out)
     for name, r in runs:
         if r["summary"]:
-            print(f"{name}: {r['summary']}")
+            print(f"{name}: {r['summary']}", file=out)
 
 
-def plot(runs, prefix):
+def plot(runs, out_dir):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -115,7 +138,7 @@ def plot(runs, prefix):
     ax.grid(True, which="both", alpha=0.3)
     ax.legend()
     fig.tight_layout()
-    fig.savefig(f"{prefix}_hist.png", dpi=150)
+    fig.savefig(os.path.join(out_dir, "latency_hist.png"), dpi=150)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(9, 5))
@@ -129,7 +152,7 @@ def plot(runs, prefix):
     ax.grid(True, which="both", alpha=0.3)
     ax.legend()
     fig.tight_layout()
-    fig.savefig(f"{prefix}_cdf.png", dpi=150)
+    fig.savefig(os.path.join(out_dir, "latency_cdf.png"), dpi=150)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(9, 5))
@@ -142,29 +165,43 @@ def plot(runs, prefix):
     ax.grid(True, which="both", alpha=0.3)
     ax.legend(markerscale=6)
     fig.tight_layout()
-    fig.savefig(f"{prefix}_series.png", dpi=150)
+    fig.savefig(os.path.join(out_dir, "latency_series.png"), dpi=150)
     plt.close(fig)
 
-    print(f"saved {prefix}_hist.png, {prefix}_cdf.png, {prefix}_series.png")
+    print(f"saved latency_hist.png, latency_cdf.png, latency_series.png in {out_dir}")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("files", nargs="+", help="CSV files from capture.py")
-    ap.add_argument("--names", help="comma-separated run names, one per file")
-    ap.add_argument("--prefix", default="latency", help="plot file prefix (default latency)")
+    ap.add_argument("runs", nargs="+", help="run names under runs/, run folders or CSV files")
+    ap.add_argument("--names", help="comma-separated run names, one per run")
+    ap.add_argument("--out", help="output folder (default: the run's folder, or "
+                                  "runs/compare_<runs> for several)")
+    ap.add_argument("--runs-dir", default=RUNS_DIR, help="folder holding the runs (default runs/)")
     ap.add_argument("--no-plots", action="store_true")
     a = ap.parse_args()
 
-    names = a.names.split(",") if a.names else [os.path.splitext(os.path.basename(f))[0]
-                                                for f in a.files]
-    if len(names) != len(a.files):
-        sys.exit("--names needs one name per file")
-    runs = [(n, load(f)) for n, f in zip(names, a.files)]
+    found = [resolve(r, a.runs_dir) for r in a.runs]
+    names = a.names.split(",") if a.names else [n for n, _, _ in found]
+    if len(names) != len(found):
+        sys.exit("--names needs one name per run")
+    if a.out:
+        out_dir = a.out
+    elif len(found) == 1:
+        out_dir = found[0][2]
+    else:
+        out_dir = os.path.join(a.runs_dir, "compare_" + "_".join(n for n, _, _ in found))
+    os.makedirs(out_dir, exist_ok=True)
+
+    runs = [(n, load(csv)) for n, (_, csv, _) in zip(names, found)]
     report(runs)
+    with open(os.path.join(out_dir, "report.txt"), "w", newline="\n") as f:
+        f.write("runs: " + ", ".join(csv for _, csv, _ in found) + "\n")
+        report(runs, f)
+    print(f"saved report.txt in {out_dir}")
     if not a.no_plots:
-        plot(runs, a.prefix)
+        plot(runs, out_dir)
 
 
 if __name__ == "__main__":

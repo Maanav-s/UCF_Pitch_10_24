@@ -120,8 +120,11 @@ module exchange_core
 
   typedef enum logic [1:0] {S_IDLE, S_SEND, S_WAIT, S_GAP} state_t;
 
-  state_t      state;
-  logic [10:0] idx;      // next MD_FRAME byte to hand to rmii_tx
+  // fsm_encoding "none": Vivado 2025.2 synthesis crashed (access violation)
+  // in FSM extraction right after inferring this state machine, once the run
+  // logic was added. "none" keeps the 2-bit encoding as written.
+  (* fsm_encoding = "none" *) state_t state;
+  logic [10:0] idx;     // next MD_FRAME byte to hand to rmii_tx
   logic [31:0] gap_cnt;
   logic        run_req;  // run_start seen, waiting for idle
   logic [31:0] run_cnt;  // sends started in this run
