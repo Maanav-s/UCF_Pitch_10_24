@@ -1,5 +1,6 @@
 `timescale 1ns / 1ps
-// Testbench for exchange_core (with latency_timer, rmii_tx and rmii_rx).
+// Testbench for exchange_core (with latency_timer, rmii_tx and rmii_rx),
+// sample_log and exchange_dump, wired as in exchange.sv.
 //
 // A trader model sits on the other end of the RMII wires: an rmii_rx on the
 // exchange's TX pins and an rmii_tx driving the exchange's RX pins. When it
@@ -21,6 +22,12 @@
 //   5. Wrong reply (side 54=2): not accepted, the send times out.
 //   6. Reply after the timeout: timeout, then counted in n_stale.
 //   7. auto_send: 3 sends in a row, each timed; min/max; clear.
+//   8. Run of RUN_LEN sends with rising trader delays and one wrong reply:
+//      exactly RUN_LEN sends, one log entry each (timeout = 0xFFFFFFFF),
+//      run_done. Then the UART dump, decoded from the TX line: header, one
+//      line per entry matching the latencies the wires gave, summary line.
+//      A send pulse during the dump is ignored (hold).
+//   9. Dump with an empty log: header with samples=0, then the summary.
 //
 // Prints "TB_EXCHANGE PASS" or "TB_EXCHANGE FAIL (<n> errors)" at the end.
 
@@ -32,6 +39,8 @@ module tb_exchange;
   localparam real CLK_PERIOD   = 20.0;  // 50 MHz REF_CLK
   localparam int  TIMEOUT_CLKS = 5000;
   localparam int  GAP_CLKS     = 100;
+  localparam int  RUN_LEN      = 5;
+  localparam int  UART_DIV     = 10;  // clocks per bit in the dump
 
   logic clk = 1'b0;
   logic rst = 1'b1;
@@ -39,7 +48,7 @@ module tb_exchange;
 
   // ---------------------------------------------------------------- DUT
 
-  logic send = 1'b0, auto_send = 1'b0, clear = 1'b0;
+  logic send = 1'b0, auto_send = 1'b0, clear = 1'b0, run_start = 1'b0, dump_start = 1'b0;
 
   wire       ex_tx_en;  // exchange -> trader
   wire [1:0] ex_txd;
@@ -47,24 +56,32 @@ module tb_exchange;
   wire [1:0] tr_txd;
 
   logic        waiting, lat_valid, last_ok, last_timeout, rx_crs, tx_active;
+  logic        timed_out, stats_clear, run_active, run_done, dump_busy;
   logic [31:0] lat_last, lat_min, lat_max;
   logic [31:0] n_replies, n_timeouts, n_other, n_stale;
 
   exchange_core #(
     .TIMEOUT_CLKS (TIMEOUT_CLKS),
-    .GAP_CLKS     (GAP_CLKS)
+    .GAP_CLKS     (GAP_CLKS),
+    .RUN_LEN      (RUN_LEN)
   ) dut (
     .clk          (clk),
     .rst          (rst),
     .send         (send),
     .auto_send    (auto_send),
     .clear        (clear),
+    .run_start    (run_start),
+    .hold         (dump_busy),
     .rmii_crs_dv  (tr_tx_en),
     .rmii_rxd     (tr_txd),
     .rmii_tx_en   (ex_tx_en),
     .rmii_txd     (ex_txd),
     .waiting      (waiting),
     .lat_valid    (lat_valid),
+    .timed_out    (timed_out),
+    .stats_clear  (stats_clear),
+    .run_active   (run_active),
+    .run_done     (run_done),
     .lat_last     (lat_last),
     .lat_min      (lat_min),
     .lat_max      (lat_max),
@@ -76,6 +93,48 @@ module tb_exchange;
     .last_timeout (last_timeout),
     .rx_crs       (rx_crs),
     .tx_active    (tx_active)
+  );
+
+  // ---------------------------------------------------------------- log, dump
+
+  logic [$clog2(RUN_LEN)-1:0] log_addr;
+  logic [31:0]                log_data, n_samples;
+  logic                       log_full, rs_tx;
+
+  sample_log #(.N(RUN_LEN)) u_log (
+    .clk       (clk),
+    .rst       (rst),
+    .clear     (stats_clear),
+    .lat_valid (lat_valid),
+    .lat       (lat_last),
+    .timed_out (timed_out),
+    .rd_addr   (log_addr),
+    .rd_data   (log_data),
+    .n_samples (n_samples),
+    .full      (log_full)
+  );
+
+  exchange_dump #(
+    .CLK_HZ  (50_000_000),
+    .BAUD    (50_000_000 / UART_DIV),
+    .N       (RUN_LEN),
+    .TICK_NS (20)
+  ) u_dump (
+    .clk        (clk),
+    .rst        (rst),
+    .start      (dump_start),
+    .label      (2'd2),
+    .rd_addr    (log_addr),
+    .rd_data    (log_data),
+    .n_samples  (n_samples),
+    .lat_min    (lat_min),
+    .lat_max    (lat_max),
+    .n_replies  (n_replies),
+    .n_timeouts (n_timeouts),
+    .n_other    (n_other),
+    .n_stale    (n_stale),
+    .tx         (rs_tx),
+    .busy       (dump_busy)
   );
 
   // ---------------------------------------------------------------- trader model
@@ -119,6 +178,10 @@ module tb_exchange;
 
   reply_t reply_mode  = R_GOOD;
   int     reply_delay = 100;  // clocks from the market data's rx_eof
+
+  // Test 8: per-message plan, message k = n_md - plan_base - 1.
+  bit     use_plan  = 1'b0;
+  int     plan_base = 0;
 
   localparam int REPLY_NO_FCS = REPLY_FRAME_LEN - 4;
   localparam logic [7:0] MD_FCS [4] = '{8'h4d, 8'h73, 8'h8b, 8'hb3};
@@ -187,6 +250,11 @@ module tb_exchange;
               $sformatf("market data FCS byte %0d = %02h, expected %02h",
                         i, md_got[MD_FRAME_LEN + i], MD_FCS[i]));
 
+      if (use_plan) begin
+        reply_mode  = (n_md - plan_base - 1 == 2) ? R_WRONG : R_GOOD;
+        reply_delay = 100 + 200 * (n_md - plan_base - 1);
+      end
+
       repeat (reply_delay) @(posedge clk);
 
       case (reply_mode)
@@ -244,15 +312,71 @@ module tb_exchange;
   end
 
   int n_lat = 0;
+  logic [31:0] outcome_q [$];  // every lat_valid / timed_out, as sample_log stores it
 
   always @(posedge clk) begin
+    if (stats_clear)
+      outcome_q.delete();
+    if (timed_out)
+      outcome_q.push_back(32'hFFFF_FFFF);
     if (lat_valid) begin
+      outcome_q.push_back(lat_last);
       n_lat++;
       $display("  latency %0d ticks (%0.2f us)", lat_last, lat_last * CLK_PERIOD / 1000.0);
       check(lat_last == t_e - t_a,
             $sformatf("latency %0d ticks, wires say %0d", lat_last, t_e - t_a));
     end
   end
+
+  // ---------------------------------------------------------------- UART decoder
+
+  string uart_line = "";
+  string uart_lines [$];
+
+  initial begin
+    logic [7:0] ch;
+    forever begin
+      @(negedge rs_tx);
+      repeat (UART_DIV / 2) @(posedge clk);
+      check(rs_tx === 1'b0, "UART start bit not low at mid-bit");
+      for (int b = 0; b < 8; b++) begin
+        repeat (UART_DIV) @(posedge clk);
+        ch[b] = rs_tx;
+      end
+      repeat (UART_DIV) @(posedge clk);
+      check(rs_tx === 1'b1, "UART stop bit not high");
+      if (ch == 8'h0A) begin
+        uart_lines.push_back(uart_line);
+        uart_line = "";
+      end else begin
+        uart_line = $sformatf("%s%c", uart_line, ch);
+      end
+    end
+  end
+
+  // Pulse dump_start and wait until the dump has been sent and decoded.
+  task automatic do_dump();
+    uart_lines.delete();
+    @(negedge clk);
+    dump_start = 1'b1;
+    @(negedge clk);
+    dump_start = 1'b0;
+    @(posedge clk iff !dump_busy);
+    repeat (2 * UART_DIV) @(posedge clk);
+  endtask
+
+  task automatic check_line(input int i, input string exp);
+    if (i >= uart_lines.size())
+      check(1'b0, $sformatf("dump line %0d missing, expected '%s'", i, exp));
+    else
+      check(uart_lines[i] == exp,
+            $sformatf("dump line %0d '%s', expected '%s'", i, uart_lines[i], exp));
+  endtask
+
+  function automatic string summary();
+    return $sformatf("# min=%0d,max=%0d,replies=%0d,timeouts=%0d,other=%0d,stale=%0d",
+                     lat_min, lat_max, n_replies, n_timeouts, n_other, n_stale);
+  endfunction
 
   // ---------------------------------------------------------------- tests
 
@@ -346,6 +470,70 @@ module tb_exchange;
     check(lat_min == lat1 && lat_max == lat1,
           $sformatf("min %0d, max %0d, expected %0d", lat_min, lat_max, lat1));
 
+    $display("Test 8: run of %0d, then the UART dump", RUN_LEN);
+    use_plan  = 1'b1;
+    plan_base = n_md;
+    @(negedge clk);
+    run_start = 1'b1;
+    @(negedge clk);
+    run_start = 1'b0;
+    @(posedge clk iff run_active);
+    @(posedge clk iff !run_active);
+    @(posedge clk iff !m_active);
+    repeat (GAP_CLKS + 10) @(posedge clk);
+    use_plan    = 1'b0;
+    reply_mode  = R_GOOD;
+    reply_delay = 100;
+    check(run_done, "run_done not set after the run");
+    check(n_md - plan_base == RUN_LEN,
+          $sformatf("run sent %0d market-data frames, expected %0d", n_md - plan_base, RUN_LEN));
+    check(n_samples == RUN_LEN && log_full,
+          $sformatf("sample log has %0d entries, expected %0d", n_samples, RUN_LEN));
+    check(outcome_q.size() == RUN_LEN,
+          $sformatf("%0d outcomes since the run start, expected %0d", outcome_q.size(), RUN_LEN));
+    check(n_replies == RUN_LEN - 1 && n_timeouts == 1 && n_other == 1,
+          $sformatf("replies %0d, timeouts %0d, other %0d; expected %0d, 1, 1",
+                    n_replies, n_timeouts, n_other, RUN_LEN - 1));
+    if (outcome_q.size() == RUN_LEN) begin
+      check(outcome_q[2] == 32'hFFFF_FFFF, "entry 2 is not a timeout");
+      check(outcome_q[1] == outcome_q[0] + 200 && outcome_q[3] == outcome_q[0] + 600,
+            "run latencies do not follow the 200-clock delay steps");
+    end
+
+    n0 = n_md;
+    fork
+      do_dump();
+      begin
+        // BTNC during the dump: must be ignored.
+        repeat (50) @(posedge clk);
+        @(negedge clk);
+        send = 1'b1;
+        @(negedge clk);
+        send = 1'b0;
+      end
+    join
+    check(n_md == n0, "a send pulse during the dump sent market data");
+    check(uart_lines.size() == RUN_LEN + 2,
+          $sformatf("dump has %0d lines, expected %0d", uart_lines.size(), RUN_LEN + 2));
+    check_line(0, $sformatf("# run label=C tick_ns=20 samples=%0d", RUN_LEN));
+    for (int i = 0; i < RUN_LEN && i < outcome_q.size(); i++)
+      check_line(1 + i, $sformatf("%0d,%0d", i, outcome_q[i]));
+    check_line(RUN_LEN + 1, summary());
+    for (int i = 0; i < uart_lines.size(); i++)
+      $display("  dump: %s", uart_lines[i]);
+
+    $display("Test 9: dump with an empty log");
+    @(negedge clk);
+    clear = 1'b1;
+    @(negedge clk);
+    clear = 1'b0;
+    check(n_samples == 0 && !run_done, "clear did not empty the log / reset run_done");
+    do_dump();
+    check(uart_lines.size() == 2,
+          $sformatf("empty dump has %0d lines, expected 2", uart_lines.size()));
+    check_line(0, "# run label=C tick_ns=20 samples=0");
+    check_line(1, summary());
+
     if (errors == 0)
       $display("TB_EXCHANGE PASS");
     else
@@ -354,7 +542,7 @@ module tb_exchange;
   end
 
   initial begin
-    #2ms;
+    #5ms;
     $display("TB_EXCHANGE FAIL (timeout)");
     $finish;
   end

@@ -15,3 +15,6 @@
 
 # Script build output
 build/
+
+# Python
+__pycache__/
