@@ -37,7 +37,8 @@
 module one_board_top #(
   parameter bit SPECULATIVE_TX = 1'b0,
   parameter int RUN_LEN        = 4096,
-  parameter int BAUD           = 115200
+  parameter int BAUD           = 115200,
+  parameter int DEBOUNCE_CLKS  = 500_000  // 10 ms; testbenches shorten it
 ) (
   // Exchange's LAN8720 on JB
   input  logic        ex_ref_clk,  // JB[0]
@@ -76,7 +77,7 @@ module one_board_top #(
   logic        ex_dp;
   logic [3:0]  ex_an;
 
-  exchange #(.RUN_LEN(RUN_LEN), .BAUD(BAUD)) u_ex (
+  exchange #(.RUN_LEN(RUN_LEN), .BAUD(BAUD), .DEBOUNCE_CLKS(DEBOUNCE_CLKS)) u_ex (
     .rmii_ref_clk (ex_ref_clk),
     .rmii_crs_dv  (ex_crs_dv),
     .rmii_rxd     (ex_rxd),
@@ -114,8 +115,8 @@ module one_board_top #(
   logic        clear, show_limit;
   logic [15:0] sw_s;
 
-  debounce u_db_u (.clk(clk), .rst(rst), .btn_async(btnU), .level(),           .rise(clear));
-  debounce u_db_l (.clk(clk), .rst(rst), .btn_async(btnL), .level(show_limit), .rise());
+  debounce #(.CLKS(DEBOUNCE_CLKS)) u_db_u (.clk(clk), .rst(rst), .btn_async(btnU), .level(),           .rise(clear));
+  debounce #(.CLKS(DEBOUNCE_CLKS)) u_db_l (.clk(clk), .rst(rst), .btn_async(btnL), .level(show_limit), .rise());
 
   xpm_cdc_array_single #(
     .DEST_SYNC_FF   (2),

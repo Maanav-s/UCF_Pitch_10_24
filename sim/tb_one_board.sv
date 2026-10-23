@@ -8,7 +8,7 @@
 // tested on one clock in tb_trader and tb_e2e; this checks the top level:
 // pins, switch and button mapping, LEDs and the display mux.
 //
-// The debouncers are shortened to 50 clocks with defparam.
+// The debouncers are shortened to 50 clocks (DEBOUNCE_CLKS).
 //
 // Tests
 //   1. Trader limit $111.10 (SW[10:2] all on): BTNC sends, the exchange gets
@@ -50,7 +50,7 @@ module tb_one_board;
   wire       ex_tx_en, tr_tx_en;
   wire [1:0] ex_txd, tr_txd;
 
-  one_board_top dut (
+  one_board_top #(.DEBOUNCE_CLKS(50)) dut (
     .ex_ref_clk (ex_clk),
     .ex_crs_dv  (tr_tx_en),
     .ex_rxd     (tr_txd),
@@ -74,17 +74,10 @@ module tb_one_board;
     .an         (an)
   );
 
-  defparam dut.u_ex.u_db_c.CLKS = 50;
-  defparam dut.u_ex.u_db_u.CLKS = 50;
-  defparam dut.u_ex.u_db_d.CLKS = 50;
-  defparam dut.u_ex.u_db_r.CLKS = 50;
-  defparam dut.u_db_u.CLKS      = 50;
-  defparam dut.u_db_l.CLKS      = 50;
-
-  task automatic press(ref logic btn);
-    btn = 1'b1;
+  task automatic press_c();
+    btnC = 1'b1;
     repeat (200) @(posedge ex_clk);
-    btn = 1'b0;
+    btnC = 1'b0;
     repeat (200) @(posedge ex_clk);
   endtask
 
@@ -108,7 +101,7 @@ module tb_one_board;
     int r0, t0;
     r0 = dut.u_ex.u_core.n_replies;
     t0 = dut.u_ex.u_core.n_timeouts;
-    press(btnC);
+    press_c();
     for (int c = 0; c < 600_000 && dut.u_ex.u_core.n_replies == r0
                                  && dut.u_ex.u_core.n_timeouts == t0; c++)
       @(posedge ex_clk);

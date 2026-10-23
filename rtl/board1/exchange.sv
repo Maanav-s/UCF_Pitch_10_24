@@ -35,7 +35,8 @@
 
 module exchange #(
   parameter int RUN_LEN = 4096,  // sends per BTND run; also the sample log size
-  parameter int BAUD    = 115200
+  parameter int BAUD    = 115200,
+  parameter int DEBOUNCE_CLKS = 500_000  // 10 ms; testbenches shorten it
 ) (
   input  logic        rmii_ref_clk,  // JB[0], 50 MHz from the LAN8720 module
   input  logic        rmii_crs_dv,   // JB[1]
@@ -75,10 +76,10 @@ module exchange #(
   logic send, clear, run_start, dump_start;
   logic [15:0] sw_s;
 
-  debounce u_db_c (.clk(clk), .rst(rst), .btn_async(btnC), .level(), .rise(send));
-  debounce u_db_u (.clk(clk), .rst(rst), .btn_async(btnU), .level(), .rise(clear));
-  debounce u_db_d (.clk(clk), .rst(rst), .btn_async(btnD), .level(), .rise(run_start));
-  debounce u_db_r (.clk(clk), .rst(rst), .btn_async(btnR), .level(), .rise(dump_start));
+  debounce #(.CLKS(DEBOUNCE_CLKS)) u_db_c (.clk(clk), .rst(rst), .btn_async(btnC), .level(), .rise(send));
+  debounce #(.CLKS(DEBOUNCE_CLKS)) u_db_u (.clk(clk), .rst(rst), .btn_async(btnU), .level(), .rise(clear));
+  debounce #(.CLKS(DEBOUNCE_CLKS)) u_db_d (.clk(clk), .rst(rst), .btn_async(btnD), .level(), .rise(run_start));
+  debounce #(.CLKS(DEBOUNCE_CLKS)) u_db_r (.clk(clk), .rst(rst), .btn_async(btnR), .level(), .rise(dump_start));
 
   xpm_cdc_array_single #(
     .DEST_SYNC_FF   (2),

@@ -320,23 +320,22 @@ module trader_core
   // (even).
   logic [10:0]     seq_sum, px_hi, px_lo;
   logic [7:0]      ck_bin;
-  logic [0:2][7:0] ck;
+  logic [7:0]      ck_h, ck_t, ck_u;  // CheckSum digits: hundreds, tens, units
   logic [31:0]     u_sum;
   logic [15:0]     udp_ck;
   logic [CK_STAGES-1:0] rdy_sr;
 
   wire ck_rdy = rdy_sr[CK_STAGES-1];
 
-  // 8-bit value to 3 ASCII digits.
-  function automatic logic [0:2][7:0] to_ascii3(input logic [7:0] v);
-    logic [7:0] r;
-    logic [3:0] h, t, u;
-    h = (v >= 8'd200) ? 4'd2 : (v >= 8'd100) ? 4'd1 : 4'd0;
-    r = v - 8'(h) * 8'd100;
-    t = 4'((16'(r) * 16'd205) >> 11);  // r / 10, exact for r < 1029
-    u = 4'(r - 8'(t) * 8'd10);
-    return {8'h30 | 8'(h), 8'h30 | 8'(t), 8'h30 | 8'(u)};
-  endfunction
+  // ck_bin as 3 decimal digits. Plain signals, not a function returning a
+  // packed array: xelab 2025.2 crashed in data-flow analysis on this design.
+  logic [3:0] d_h, d_t, d_u;
+  logic [7:0] d_r;
+
+  assign d_h = (ck_bin >= 8'd200) ? 4'd2 : (ck_bin >= 8'd100) ? 4'd1 : 4'd0;
+  assign d_r = ck_bin - 8'(d_h) * 8'd100;
+  assign d_t = 4'((16'(d_r) * 16'd205) >> 11);  // d_r / 10, exact for d_r < 1029
+  assign d_u = 4'(d_r - 8'(d_t) * 8'd10);
 
   logic [16:0] u_f, u_fold;
 
@@ -348,11 +347,13 @@ module trader_core
     // stage 2
     ck_bin  <= FIX_BASE + 8'(seq_sum << 1) + 8'(px_hi) + 8'(px_lo);
     // stage 3
-    ck      <= to_ascii3(ck_bin);
+    ck_h    <= 8'h30 | 8'(d_h);
+    ck_t    <= 8'h30 | 8'(d_t);
+    ck_u    <= 8'h30 | 8'(d_u);
     // stage 4
     u_sum   <= UDP_BASE + 32'(seq_sum) * 32'd257
-               + ((32'(px_hi) + 32'(ck[0]) + 32'(ck[2])) << 8)
-               + 32'(px_lo) + 32'(ck[1]);
+               + ((32'(px_hi) + 32'(ck_h) + 32'(ck_u)) << 8)
+               + 32'(px_lo) + 32'(ck_t);
     // stage 5: fold and invert (0 is sent as 0xFFFF)
     udp_ck  <= (~u_fold[15:0] == 16'h0000) ? 16'hFFFF : ~u_fold[15:0];
 
@@ -396,8 +397,12 @@ module trader_core
       tx_data = seq[3'(idx - 7'(RP_CLORD))];
     else if (idx >= RP_PX && idx < RP_PX + 7)
       tx_data = px[3'(idx - 7'(RP_PX))];
-    else if (idx >= RP_CK && idx < RP_CK + 3)
-      tx_data = ck[2'(idx - 7'(RP_CK))];
+    else if (idx == RP_CK)
+      tx_data = ck_h;
+    else if (idx == RP_CK + 1)
+      tx_data = ck_t;
+    else if (idx == RP_CK + 2)
+      tx_data = ck_u;
   end
 
   logic sent_p, cut_p;
