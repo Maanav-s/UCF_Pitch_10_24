@@ -62,10 +62,13 @@ module trader_core
   parameter bit          TX_NEGEDGE     = 1'b0,
   parameter logic [31:0] LIMIT_BASE     = 32'd600_000,  // $60.00
   parameter logic [31:0] LIMIT_STEP     = 32'd100,      // $0.01
-  parameter logic [31:0] TICKER0        = "AAPL",
-  parameter logic [31:0] TICKER1        = "MSFT",
-  parameter logic [31:0] TICKER2        = "NVDA",
-  parameter logic [31:0] TICKER3        = "TSLA"
+  // Tickers as ASCII, first character in the top byte. Written in hex, not
+  // as string literals: xelab 2025.2 crashed (VeriIntVal::PrettyPrint)
+  // elaborating this module with string literals in these parameters.
+  parameter logic [31:0] TICKER0        = 32'h4141_504C,  // "AAPL"
+  parameter logic [31:0] TICKER1        = 32'h4D53_4654,  // "MSFT"
+  parameter logic [31:0] TICKER2        = 32'h4E56_4441,  // "NVDA"
+  parameter logic [31:0] TICKER3        = 32'h5453_4C41   // "TSLA"
 ) (
   input  logic        clk,
   input  logic        rst,
@@ -171,11 +174,11 @@ module trader_core
   // Constant part-selects only: a variable part-select of a wide constant
   // crashed Vivado 2025.2 synthesis (see exchange_dump).
   always_comb
-    case (2'(rx_offset - 11'(MD_SYM)))
-      2'd0:    sym_byte = ticker[31:24];
-      2'd1:    sym_byte = ticker[23:16];
-      2'd2:    sym_byte = ticker[15:8];
-      default: sym_byte = ticker[7:0];
+    case (rx_offset)
+      MD_SYM + 0: sym_byte = ticker[31:24];
+      MD_SYM + 1: sym_byte = ticker[23:16];
+      MD_SYM + 2: sym_byte = ticker[15:8];
+      default:    sym_byte = ticker[7:0];
     endcase
 
   // Offsets that must equal MD_FRAME: everything except the source MAC
@@ -192,7 +195,7 @@ module trader_core
     if (off_seq || off_sym || off_pxd)      md_checked = 1'b0;
     if (rx_offset == MD_SIDE)               md_checked = 1'b0;
 
-    is_digit = (rx_data >= "0") && (rx_data <= "9");
+    is_digit = (rx_data >= 8'h30) && (rx_data <= 8'h39);  // '0'..'9'
     byte_bad = (md_checked && rx_data != md_byte)
                || ((off_seq || off_pxd) && !is_digit);
   end
@@ -274,7 +277,7 @@ module trader_core
           if (off_sym && rx_data != sym_byte)
             sym_ok <= 1'b0;
           if (rx_offset == MD_SIDE)
-            side_ok <= (rx_data == "1");
+            side_ok <= (rx_data == 8'h31);  // '1' = offer
           if (off_pxd)
             acc <= acc_next;
           if (rx_offset == MD_LAST) begin
