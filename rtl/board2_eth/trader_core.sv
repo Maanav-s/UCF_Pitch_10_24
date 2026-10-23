@@ -148,23 +148,6 @@ module trader_core
 
   // ---------------------------------------------------------------- parser
 
-  // Offsets that must equal MD_FRAME.
-  function automatic bit md_checked(input logic [10:0] off);
-    if (off >= 6  && off <= 11)                 return 1'b0;  // source MAC
-    if (off >= 18 && off <= 22)                 return 1'b0;  // IPv4 ID, flags, TTL
-    if (off == 24 || off == 25)                 return 1'b0;  // IPv4 checksum
-    if (off == 40 || off == 41)                 return 1'b0;  // UDP checksum
-    if (off >= MD_SEQ && off < MD_SEQ + 5)      return 1'b0;
-    if (off >= MD_SYM && off < MD_SYM + 4)      return 1'b0;
-    if (off == MD_SIDE)                         return 1'b0;
-    if (off >= MD_PX && off <= MD_LAST && off != MD_DOT) return 1'b0;
-    return 1'b1;
-  endfunction
-
-  function automatic bit is_digit(input logic [7:0] b);
-    return b >= "0" && b <= "9";
-  endfunction
-
   logic        in_frame;  // between a frame's first byte and its rx_eof
   logic        bad;       // a check failed (before the decision)
   logic        decided;   // the decision for this frame is made
@@ -174,8 +157,8 @@ module trader_core
   logic        have_seq;  // MsgSeqNum captured
   logic        sym_ok, side_ok;
   logic [19:0] acc;       // price in cents, from the digits so far
-  logic [0:4][7:0] seq;
-  logic [0:6][7:0] px;
+  logic [7:0]  seq [5];   // MsgSeqNum digits
+  logic [7:0]  px  [7];   // MDEntryPx characters, '.' included
   logic [31:0] ticker;    // TICKER[sel], taken between frames
 
   wire        off_seq  = rx_offset >= MD_SEQ && rx_offset < MD_SEQ + 5;
@@ -195,8 +178,24 @@ module trader_core
       default: sym_byte = ticker[7:0];
     endcase
 
-  wire byte_bad = (md_checked(rx_offset) && rx_data != md_byte)
-                  || ((off_seq || off_pxd) && !is_digit(rx_data));
+  // Offsets that must equal MD_FRAME: everything except the source MAC
+  // (6-11), IPv4 ID/flags/TTL (18-22), IPv4 checksum (24-25), UDP checksum
+  // (40-41) and the decoded fields. Digits must be '0'-'9'.
+  logic md_checked, is_digit, byte_bad;
+
+  always_comb begin
+    md_checked = 1'b1;
+    if (rx_offset >= 6  && rx_offset <= 11) md_checked = 1'b0;
+    if (rx_offset >= 18 && rx_offset <= 22) md_checked = 1'b0;
+    if (rx_offset == 24 || rx_offset == 25) md_checked = 1'b0;
+    if (rx_offset == 40 || rx_offset == 41) md_checked = 1'b0;
+    if (off_seq || off_sym || off_pxd)      md_checked = 1'b0;
+    if (rx_offset == MD_SIDE)               md_checked = 1'b0;
+
+    is_digit = (rx_data >= "0") && (rx_data <= "9");
+    byte_bad = (md_checked && rx_data != md_byte)
+               || ((off_seq || off_pxd) && !is_digit);
+  end
 
   // At byte 96: the whole price, in $0.0001 units.
   wire [19:0] acc_next = acc * 20'd10 + 20'(rx_data[3:0]);
@@ -218,8 +217,8 @@ module trader_core
       sym_ok   <= 1'b0;
       side_ok  <= 1'b0;
       acc      <= '0;
-      seq      <= '0;
-      px       <= '0;
+      for (int i = 0; i < 5; i++) seq[i] <= '0;
+      for (int i = 0; i < 7; i++) px[i]  <= '0;
       ticker   <= TICKER0;
       limit    <= LIMIT_BASE;
     end else begin
@@ -255,16 +254,27 @@ module trader_core
         end else if (!decided) begin
           if (byte_bad)
             bad <= 1'b1;
-          if (off_seq)
-            seq[3'(rx_offset - 11'(MD_SEQ))] <= rx_data;
+          case (rx_offset)
+            MD_SEQ + 0: seq[0] <= rx_data;
+            MD_SEQ + 1: seq[1] <= rx_data;
+            MD_SEQ + 2: seq[2] <= rx_data;
+            MD_SEQ + 3: seq[3] <= rx_data;
+            MD_SEQ + 4: seq[4] <= rx_data;
+            MD_PX  + 0: px[0]  <= rx_data;
+            MD_PX  + 1: px[1]  <= rx_data;
+            MD_PX  + 2: px[2]  <= rx_data;
+            MD_PX  + 3: px[3]  <= rx_data;
+            MD_PX  + 4: px[4]  <= rx_data;
+            MD_PX  + 5: px[5]  <= rx_data;
+            MD_PX  + 6: px[6]  <= rx_data;
+            default: ;
+          endcase
           if (rx_offset == MD_SEQ + 4)
             have_seq <= 1'b1;
           if (off_sym && rx_data != sym_byte)
             sym_ok <= 1'b0;
           if (rx_offset == MD_SIDE)
             side_ok <= (rx_data == "1");
-          if (off_px)
-            px[3'(rx_offset - 11'(MD_PX))] <= rx_data;
           if (off_pxd)
             acc <= acc_next;
           if (rx_offset == MD_LAST) begin
@@ -279,46 +289,26 @@ module trader_core
 
   // ---------------------------------------------------------------- reply fields
 
-  // Constant parts of the reply's checksums, from REPLY_FRAME with the
-  // patched bytes left out.
-  function automatic bit rp_patched(input int i);
-    return (i >= RP_SEQ   && i < RP_SEQ + 5)
-        || (i >= RP_CLORD && i < RP_CLORD + 5)
-        || (i >= RP_PX    && i < RP_PX + 7)
-        || (i >= RP_CK    && i < RP_CK + 3)
-        || i == RP_UDP_CK || i == RP_UDP_CK + 1;
-  endfunction
-
-  // FIX CheckSum: sum of the payload bytes before "10=" (frame 42-118).
-  function automatic logic [7:0] fix_base();
-    logic [7:0] s;
-    s = '0;
-    for (int i = 42; i <= RP_CK - 4; i++)
-      if (!rp_patched(i))
-        s = s + REPLY_FRAME[i];
-    return s;
-  endfunction
-
-  // UDP checksum: 16-bit words of the pseudo-header (addresses at 26-33,
-  // protocol, UDP length), the UDP header and the payload. A byte at an even
-  // frame offset is the high byte of its word.
-  function automatic logic [31:0] udp_base();
-    logic [31:0] s;
-    s = 32'h0011 + {16'h0, REPLY_FRAME[38], REPLY_FRAME[39]};
-    for (int i = 26; i < RP_LEN; i++)
-      if (!rp_patched(i))
-        s = s + ((i % 2 == 0) ? {16'h0, REPLY_FRAME[i], 8'h00} : {24'h0, REPLY_FRAME[i]});
-    return s;
-  endfunction
-
-  localparam logic [7:0]  FIX_BASE = fix_base();
-  localparam logic [31:0] UDP_BASE = udp_base();
+  // Constant parts of the reply's checksums: REPLY_FRAME with the patched
+  // bytes (seq at 66-70 and 75-79, price at 111-117, CheckSum at 122-124,
+  // UDP checksum at 40-41) left out. tb_trader recomputes both from
+  // REPLY_FRAME and checks them, so a regenerated fix_packets_pkg that
+  // changes them fails the testbench. (Constant functions over REPLY_FRAME
+  // were avoided here: xelab 2025.2 crashed elaborating this module.)
+  //
+  // FIX_BASE: sum of payload bytes 42-118 (before "10="), mod 256.
+  // UDP_BASE: sum of the 16-bit words of the pseudo-header (addresses at
+  //   26-33, protocol 17, UDP length) and the UDP header and payload, where
+  //   a byte at an even frame offset is the high byte of its word.
+  localparam logic [7:0]  FIX_BASE = 8'h10;
+  localparam logic [31:0] UDP_BASE = 32'h0007_AFEE;
 
   // Pipeline from the captured bytes, running every clock. Word positions:
   // seq appears at 66 (even) and 75 (odd), so each digit counts once as a
   // high and once as a low byte; price starts at 111 (odd); CheckSum at 122
   // (even).
   logic [10:0]     seq_sum, px_hi, px_lo;
+  logic [31:0]     u_sum_n;
   logic [7:0]      ck_bin;
   logic [7:0]      ck_h, ck_t, ck_u;  // CheckSum digits: hundreds, tens, units
   logic [31:0]     u_sum;
@@ -351,21 +341,28 @@ module trader_core
     ck_t    <= 8'h30 | 8'(d_t);
     ck_u    <= 8'h30 | 8'(d_u);
     // stage 4
-    u_sum   <= UDP_BASE + 32'(seq_sum) * 32'd257
-               + ((32'(px_hi) + 32'(ck_h) + 32'(ck_u)) << 8)
-               + 32'(px_lo) + 32'(ck_t);
+    u_sum   <= u_sum_n;
     // stage 5: fold and invert (0 is sent as 0xFFFF)
     udp_ck  <= (~u_fold[15:0] == 16'h0000) ? 16'hFFFF : ~u_fold[15:0];
 
-    rdy_sr  <= rst ? '0 : {rdy_sr[CK_STAGES-2:0], decided && buy_r};
+    if (rst)
+      rdy_sr <= '0;
+    else
+      rdy_sr <= {rdy_sr[CK_STAGES-2:0], decided && buy_r};
   end
+
+  // seq_sum * 257: each seq digit counts once as a high and once as a low
+  // byte (offsets 66 even, 75 odd).
+  assign u_sum_n = UDP_BASE + (32'(seq_sum) << 8) + 32'(seq_sum)
+                   + (32'(px_hi) << 8) + (32'(ck_h) << 8) + (32'(ck_u) << 8)
+                   + 32'(px_lo) + 32'(ck_t);
 
   assign u_f    = 17'(u_sum[15:0]) + 17'(u_sum[31:16]);
   assign u_fold = 17'(u_f[15:0]) + 17'(u_f[16]);
 
   // ---------------------------------------------------------------- transmit
 
-  typedef enum logic {T_IDLE, T_SEND} tstate_t;
+  typedef enum logic [1:0] {T_IDLE, T_SEND} tstate_t;
 
   tstate_t    tstate;
   logic [6:0] idx;      // next reply byte to hand to rmii_tx
@@ -391,18 +388,30 @@ module trader_core
       tx_data = SPECULATIVE_TX ? 8'h00 : udp_ck[15:8];
     else if (idx == RP_UDP_CK + 1)
       tx_data = SPECULATIVE_TX ? 8'h00 : udp_ck[7:0];
-    else if (idx >= RP_SEQ && idx < RP_SEQ + 5)
-      tx_data = seq[3'(idx - 7'(RP_SEQ))];
-    else if (idx >= RP_CLORD && idx < RP_CLORD + 5)
-      tx_data = seq[3'(idx - 7'(RP_CLORD))];
-    else if (idx >= RP_PX && idx < RP_PX + 7)
-      tx_data = px[3'(idx - 7'(RP_PX))];
-    else if (idx == RP_CK)
-      tx_data = ck_h;
-    else if (idx == RP_CK + 1)
-      tx_data = ck_t;
-    else if (idx == RP_CK + 2)
-      tx_data = ck_u;
+    else
+      case (idx)
+        RP_SEQ   + 0: tx_data = seq[0];
+        RP_SEQ   + 1: tx_data = seq[1];
+        RP_SEQ   + 2: tx_data = seq[2];
+        RP_SEQ   + 3: tx_data = seq[3];
+        RP_SEQ   + 4: tx_data = seq[4];
+        RP_CLORD + 0: tx_data = seq[0];
+        RP_CLORD + 1: tx_data = seq[1];
+        RP_CLORD + 2: tx_data = seq[2];
+        RP_CLORD + 3: tx_data = seq[3];
+        RP_CLORD + 4: tx_data = seq[4];
+        RP_PX    + 0: tx_data = px[0];
+        RP_PX    + 1: tx_data = px[1];
+        RP_PX    + 2: tx_data = px[2];
+        RP_PX    + 3: tx_data = px[3];
+        RP_PX    + 4: tx_data = px[4];
+        RP_PX    + 5: tx_data = px[5];
+        RP_PX    + 6: tx_data = px[6];
+        RP_CK    + 0: tx_data = ck_h;
+        RP_CK    + 1: tx_data = ck_t;
+        RP_CK    + 2: tx_data = ck_u;
+        default: ;
+      endcase
   end
 
   logic sent_p, cut_p;

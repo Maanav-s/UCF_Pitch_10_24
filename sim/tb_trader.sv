@@ -401,6 +401,27 @@ module tb_trader;
     rst = 1'b0;
     repeat (5) @(posedge clk);
 
+    // The trader's checksum constants are precomputed from REPLY_FRAME
+    // (see trader_core). Recompute them here and compare.
+    begin
+      logic [7:0]  fix_base;
+      logic [31:0] udp_base;
+      fix_base = '0;
+      for (int i = 42; i <= 118; i++)
+        if (!((i >= 66 && i < 71) || (i >= 75 && i < 80) || (i >= 111 && i < 118)))
+          fix_base = fix_base + REPLY_FRAME[i];
+      udp_base = 32'h0011 + {16'h0, REPLY_FRAME[38], REPLY_FRAME[39]};
+      for (int i = 26; i < RP_LEN - 4; i++)
+        if (!((i >= 66 && i < 71) || (i >= 75 && i < 80) || (i >= 111 && i < 118)
+              || (i >= 122 && i < 125) || i == 40 || i == 41))
+          udp_base = udp_base + ((i % 2 == 0) ? {16'h0, REPLY_FRAME[i], 8'h00}
+                                              : {24'h0, REPLY_FRAME[i]});
+      check(dut0.FIX_BASE == fix_base,
+            $sformatf("trader_core FIX_BASE %02h, REPLY_FRAME gives %02h", dut0.FIX_BASE, fix_base));
+      check(dut0.UDP_BASE == udp_base,
+            $sformatf("trader_core UDP_BASE %08h, REPLY_FRAME gives %08h", dut0.UDP_BASE, udp_base));
+    end
+
     // Test 1: the stored frames.
     $display("Test 1: stored market data, limit $100.00");
     begin
