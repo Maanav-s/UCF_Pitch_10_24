@@ -1,0 +1,5 @@
+runs: C:\Users\Maanav\Documents\Vivado\UCF_Pitch_10_24\runs\runB\runB.csv
+latency in us
+ run  label  samples  timeouts    min    p50    p90    p99  p99.9    max  max-min   mean  stdev
+runB      A     4096         0  20.90  20.90  20.94  20.94  20.94  20.94     0.04  20.92   0.02
+runB: min=1045,max=1047,replies=4096,timeouts=0,other=0,stale=0
