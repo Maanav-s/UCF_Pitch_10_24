@@ -34,11 +34,20 @@ auto_detect_xpm
 # FSM extraction is off, as in the other builds: Vivado 2025.2 crashed in it
 # on exchange_core (see the fsm_encoding notes in the RTL).
 synth_design -top mm_top -part xc7a35tcpg236-1 -fsm_extraction off
+
+# The three REF_CLK Pmod pins are not clock-capable. The XDC carries the same
+# property for project mode, but in this flow the *_IBUF nets only exist
+# after synthesis, so it is applied here as well.
+set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets {l_ref_clk_IBUF f_ref_clk_IBUF t_ref_clk_IBUF}]
+
 opt_design
 place_design
 route_design
 
-report_timing_summary -file $out/timing_summary.rpt
-report_cdc            -file $out/cdc.rpt
+report_timing_summary    -file $out/timing_summary.rpt
+report_cdc               -file $out/cdc.rpt
 report_clock_interaction -file $out/clock_interaction.rpt
+report_bus_skew          -file $out/bus_skew.rpt
+report_utilization       -file $out/utilization.rpt
+write_checkpoint -force $out/mm_routed.dcp
 write_bitstream -force $out/mm.bit
