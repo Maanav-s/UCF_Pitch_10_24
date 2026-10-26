@@ -42,7 +42,8 @@ $src = @(
 Set-Location $work
 xvlog -sv -L xpm @src
 if (-not $?) { exit 1 }
-# The vectors are read relative to the xsim working directory.
-xelab -L xpm -L unisims_ver -debug typical -generic_top "VEC_DIR=../mm" -top $Top -snapshot "${Top}_snap"
+# The vectors are read relative to the xsim working directory. The generic
+# must reach cmd.exe still quoted: the .bat wrappers split arguments on "=".
+xelab -L xpm -L unisims_ver -debug typical -generic_top '"VEC_DIR=../mm"' -top $Top -snapshot "${Top}_snap"
 if (-not $?) { exit 1 }
 xsim "${Top}_snap" -R
