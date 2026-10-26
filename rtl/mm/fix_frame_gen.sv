@@ -87,10 +87,20 @@ module fix_frame_gen
   wire [3:0] code = map[7:4];
   wire [3:0] k    = map[3:0];
 
+  // Character k of the 4-character symbol, by constant index (no variable
+  // part-select; see the Vivado notes in AGENTS.md).
+  logic [7:0] sym_ch;
+  always_comb begin
+    sym_ch = 8'h00;
+    for (int i = 0; i < 4; i++)
+      if (k == 4'(i))
+        sym_ch = f.sym[8*(3 - i) +: 8];
+  end
+
   always_comb begin
     case (code)
       F_SEQ:       out_data = digit_of({4'd0, f.seq}, 5, k);
-      F_SYM:       out_data = f.sym[8*(3 - k) +: 8];
+      F_SYM:       out_data = sym_ch;
       F_ENTRY:     out_data = f.entry;
       F_PRICE:     out_data = digit_of(f.price, 6, k);
       F_SIZE:      out_data = digit_of({4'd0, f.size}, 5, k);
