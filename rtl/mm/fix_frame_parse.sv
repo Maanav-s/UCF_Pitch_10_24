@@ -120,6 +120,8 @@ module fix_frame_parse
       byte_bad = !t_ok;
     end else if (off > 8'(TYPE_OFF) && !type_known) begin
       byte_bad = 1'b1;
+    end else if (type_known && off >= type_len) begin
+      byte_bad = 1'b0;  // FCS bytes: covered by the CRC check at the end
     end else begin
       case (code)
         F_NONE:  byte_bad = (in_data != tpl);
