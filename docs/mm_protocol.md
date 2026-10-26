@@ -125,7 +125,7 @@ cancel". With `SW[13]` on, the FPGA does not quote at all (taker only).
 
 `SCRIPT_DOLLARS` in `tools/mm_fix.py` (default 100, 200, 150, 120, 180, 100)
 is the sequence of AAPL prints, stored in `mm_fix_pkg`. BTNC sends the next
-one; BTND plays the rest 1 s apart.
+one; BTND plays the rest 2 s apart.
 
 Every frame the exchange sends or accepts is logged with a 32-bit `clk_ex`
 timestamp (20 ns ticks) in `mm_event_log` (1024 entries). BTNR dumps the log
@@ -175,7 +175,7 @@ last print (µs), `01` FPGA latency, `10` laptop latency, `11` fill count.
 | Control | Function |
 | --- | --- |
 | BTNC | Send the next AAPL print of the script |
-| BTND | Play the rest of the script, 1 s apart |
+| BTND | Play the rest of the script, 2 s apart |
 | BTNR | UART dump of the event log |
 | BTNU | Clear: log, statistics, book, script position, trader state |
 | BTNL | Hold: display shows the FPGA trader's half-spread |

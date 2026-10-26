@@ -35,11 +35,12 @@
 //   LED7  book has a bid       LED15  dump in progress
 
 module mm_top #(
-  parameter int GAP_CLKS      = 50_000_000,  // 1 s between auto-played prints
-  parameter int LOG_N         = 1024,
-  parameter int BAUD          = 115200,
-  parameter int DEBOUNCE_CLKS = 500_000,     // 10 ms; testbenches shorten it
-  parameter bit TX_NEGEDGE    = 1'b0
+  parameter int GAP_CLKS           = 100_000_000, // 2 s between auto-played prints
+  parameter int REQUOTE_DELAY_CLKS = 25_000_000,  // FPGA trader holds stale quotes 0.5 s
+  parameter int LOG_N              = 1024,
+  parameter int BAUD               = 115200,
+  parameter int DEBOUNCE_CLKS      = 500_000,     // 10 ms; testbenches shorten it
+  parameter bit TX_NEGEDGE         = 1'b0
 ) (
   input  logic        clk100,      // W5
 
@@ -268,7 +269,7 @@ module mm_top #(
   logic        tr_buy, tr_sell, tr_rx_crs;
   logic [31:0] tr_n_ignored;
 
-  mm_trader #(.TX_NEGEDGE(TX_NEGEDGE)) u_tr (
+  mm_trader #(.TX_NEGEDGE(TX_NEGEDGE), .REQUOTE_DELAY_CLKS(REQUOTE_DELAY_CLKS)) u_tr (
     .clk                 (clk_tr),
     .rst                 (rst_tr),
     .clear               (tr_clear),

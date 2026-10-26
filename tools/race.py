@@ -57,7 +57,11 @@ PCTS = (50, 90, 95, 99)
 
 
 def load(path):
+    """Events in log order. The exchange's timestamp is 32 bits of 20 ns
+    ticks, so it wraps every 86 s; it is unwrapped here, since a run of
+    prints 2 s apart can cross a wrap."""
     events, meta = [], {}
+    wrap, prev = 0, None
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -73,7 +77,11 @@ def load(path):
             p = line.split(",")
             if len(p) != 10:
                 continue
-            events.append(dict(i=int(p[0]), t=int(p[1]), dir=p[2], port=p[3], type=p[4],
+            t = int(p[1])
+            if prev is not None and t < prev:
+                wrap += 1 << 32
+            prev = t
+            events.append(dict(i=int(p[0]), t=t + wrap, dir=p[2], port=p[3], type=p[4],
                                side=p[5], status=p[6], clordid=p[7], orderid=p[8],
                                price=int(p[9])))
     return events, meta

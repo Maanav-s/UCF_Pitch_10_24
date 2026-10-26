@@ -26,7 +26,7 @@ module mm_exchange
   import mm_fix_pkg::*;
   import mm_pkg::*;
 #(
-  parameter int GAP_CLKS   = 50_000_000,  // 1 s between auto-played prints
+  parameter int GAP_CLKS   = 100_000_000, // 2 s between auto-played prints
   parameter int LOG_N      = 1024,
   parameter int CLK_HZ     = 50_000_000,
   parameter int BAUD       = 115200,

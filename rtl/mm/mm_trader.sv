@@ -33,12 +33,18 @@
 //      (no bid when fair <= half_spread). The two prices go through
 //      bin2bcd (24 clocks) in parallel with actions 1 and 2.
 // half_spread_dollars and quoting are sampled at DECIDE.
+//
+// REQUOTE_DELAY_CLKS holds actions 2 and 3 back that many clocks after the
+// pickoff, so the old quotes stay stale long enough for a slow trader to
+// pick them off. 0 (the default, and what tb_mm_trader checks) adds no
+// clocks at all.
 
 module mm_trader
   import mm_fix_pkg::*;
   import mm_pkg::*;
 #(
-  parameter bit TX_NEGEDGE = 1'b0
+  parameter bit TX_NEGEDGE         = 1'b0,
+  parameter int REQUOTE_DELAY_CLKS = 0
 ) (
   input  logic        clk,
   input  logic        rst,
@@ -180,9 +186,15 @@ module mm_trader
   endfunction
 
 
-  typedef enum logic [2:0] {A_IDLE, A_PICK, A_CXL_BID, A_CXL_ASK, A_QBID, A_QASK, A_WAIT} act_t;
+  typedef enum logic [2:0] {A_IDLE, A_PICK, A_CXL_BID, A_CXL_ASK, A_QBID, A_QASK, A_WAIT,
+                            A_DELAY} act_t;
+
+  // Where the burst goes after the pickoff: straight to the cancels, or
+  // through A_DELAY when a requote delay is set.
+  localparam act_t A_AFTER_PICK = (REQUOTE_DELAY_CLKS == 0) ? A_CXL_BID : A_DELAY;
 
   (* fsm_encoding = "none" *) act_t act, act_next;
+  logic [31:0] delay_cnt;
   logic        pick, pick_sell, cxl_bid, cxl_ask, q_bid, q_ask;
   logic [23:0] pick_price;
   logic [19:0] cxl_bid_id, cxl_ask_id;
@@ -260,6 +272,7 @@ module mm_trader
     if (rst || clear) begin
       act          <= A_IDLE;
       act_next     <= A_IDLE;
+      delay_cnt    <= '0;
       book_bid     <= '0;
       book_ask     <= '0;
       own_bid      <= '0;
@@ -331,6 +344,7 @@ module mm_trader
         q_ask       <= quoting;
         bcd_start   <= 1'b1;
         bcd_pending <= 1'b1;
+        delay_cnt   <= 32'(REQUOTE_DELAY_CLKS);
         act         <= A_PICK;
       end else begin
         case (act)
@@ -338,7 +352,7 @@ module mm_trader
 
           A_PICK: begin
             if (!pick) begin
-              act <= A_CXL_BID;
+              act <= A_AFTER_PICK;
             end else if (can_start) begin
               g_start  <= 1'b1;
               g_fields <= mk_order(seq_n, next_clordid, pick_sell ? CH_SELL : CH_BUY, pick_price);
@@ -353,10 +367,16 @@ module mm_trader
               end
               seq          <= seq_n;
               next_clordid <= bcd_inc5(next_clordid);
-              act_next     <= A_CXL_BID;
+              act_next     <= A_AFTER_PICK;
               act          <= A_WAIT;
             end
           end
+
+          A_DELAY:
+            if (delay_cnt == 0)
+              act <= A_CXL_BID;
+            else
+              delay_cnt <= delay_cnt - 32'd1;
 
           A_CXL_BID: begin
             if (!cxl_bid) begin
