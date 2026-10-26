@@ -12,10 +12,14 @@
 //     (skip with --no-connect)
 //   - UDP connection-reset errors off
 //
-// The packets are read from md.bin and reply.bin in the current folder, so
-// they are byte-identical to what tools/fix_test_packet.py produces: run
-// `python dump_packets.py` first.
+// The two packets are compiled in from packets.h, which dump_packets.py
+// generates from tools/fix_test_packet.py, so they are byte-identical to what
+// the exchange sends and expects. Run `python dump_packets.py` before
+// building, and again whenever fix_test_packet.py changes. The resulting .exe
+// is self-contained: no data files are needed at run time.
 //
+// Build (Developer Command Prompt for VS):
+//   cl /O2 /EHsc /std:c++17 laptop_trader_windows.cpp
 // MinGW-w64 (on Windows):
 //   g++ -O2 -std=c++17 laptop_trader_windows.cpp -o laptop_trader_windows.exe -lws2_32 -lwinmm
 // Cross-compile from macOS:
@@ -57,6 +61,8 @@
 #include <string>
 #include <vector>
 
+#include "packets.h"  // MD_BYTES, REPLY_BYTES (from dump_packets.py)
+
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "winmm.lib")
 
@@ -70,12 +76,6 @@ static volatile LONG g_stop = 0;
 static BOOL WINAPI on_ctrl(DWORD) {
     g_stop = 1;
     return TRUE;
-}
-
-static std::vector<char> read_file(const char* path) {
-    std::ifstream f(path, std::ios::binary);
-    return std::vector<char>((std::istreambuf_iterator<char>(f)),
-                             std::istreambuf_iterator<char>());
 }
 
 static void win_tune(bool realtime, int cpu) {
@@ -146,13 +146,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::vector<char> md = read_file("md.bin");
-    std::vector<char> reply = read_file("reply.bin");
-    if (md.empty() || reply.empty()) {
-        fprintf(stderr, "could not read md.bin / reply.bin (run dump_packets.py first)\n");
-        return 1;
-    }
-
     const bool want_connect = !no_connect;
     printf("optimizations: busy-poll, tuning, connect=%d, connreset off\n", want_connect);
 
@@ -187,7 +180,7 @@ int main(int argc, char** argv) {
     }
 
     printf("listening on UDP %d; expecting %zu-byte market data, replying with %zu-byte buy\n",
-           PORT, md.size(), reply.size());
+           PORT, sizeof MD_BYTES, sizeof REPLY_BYTES);
     printf("  Ctrl+C to stop\n");
 
     LARGE_INTEGER freq;
@@ -197,9 +190,9 @@ int main(int argc, char** argv) {
     lat.reserve(CAP);
 
     char buf[2048];
-    const char* mdp = md.data();
-    const char* rp = reply.data();
-    const int mdlen = (int)md.size(), rlen = (int)reply.size();
+    const char* mdp = (const char*)MD_BYTES;
+    const char* rp = (const char*)REPLY_BYTES;
+    const int mdlen = (int)sizeof MD_BYTES, rlen = (int)sizeof REPLY_BYTES;
     uint64_t buys = 0, other = 0;
     bool connected = false;
     sockaddr_in from = {};
