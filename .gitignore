@@ -21,3 +21,9 @@ __pycache__/
 
 # xsim runs of scripts/sim_mm.ps1
 sim/xsim_mm/
+
+# C++ laptop trader builds
+host/mm_trader
+host/mm_strategy_check
+host/*.exe
+host/*.obj

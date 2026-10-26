@@ -55,7 +55,7 @@ time.
 | LED2, trader prints `buy` | Reply not reaching the exchange: static ARP entry missing (run setup again), or the reply goes out another adapter |
 | LED3 lit | Normal: the OS sends its own frames (IPv6, mDNS, LLMNR); the exchange counts and ignores them |
 
-# Two-trader exchange: `mm_trader.py` / `mm_trader.cpp`
+# Two-trader exchange: `mm_trader.py` / `mm_trader.cpp` / `mm_trader_windows.cpp`
 
 For the `mm_top` build (docs/mm_protocol.md): the laptop is cabled to the
 exchange's JB port and market-makes the ETF with the same strategy as the
@@ -67,11 +67,35 @@ python host/mm_trader.py --half-spread 1 --verbose      # Windows / macOS
 make -C host && ./host/mm_trader --half-spread 1 --cpu 2 --busy-poll   # Linux
 ```
 
+Windows C++ (from `host\`, in a Developer Command Prompt for VS, or with
+MinGW-w64's `g++ -O3 -std=c++17 mm_trader_windows.cpp -o
+mm_trader_windows.exe -lws2_32 -static`):
+
+```
+cl /O2 /EHsc /std:c++17 mm_trader_windows.cpp
+mm_trader_windows.exe --half-spread 1 --power-plan    # Administrator for --power-plan
+```
+
+It busy-polls one core, runs at HIGH priority, turns power throttling off,
+and prints the user-space receive-to-send time per print on Ctrl+C. Try runs
+with and without `--cpu` and `--realtime`: on some machines pinning or
+REALTIME slows the network driver down. The bigger gains are in the
+adapter's own settings (Device Manager → adapter → Advanced): Interrupt
+Moderation off, Energy-Efficient / Green Ethernet off.
+
+The two C++ builds share the strategy in `mm_strategy.h`.
+`python host/check_mm_strategy.py` (or `make -C host check`) compiles it with
+the local compiler and checks its replies byte-exact against
+`tools/mm_model.py` over the demo script and 50 random ones.
+
 Set the FPGA trader's half-spread wider (SW[5:2] = 2, i.e. $2) so the
 laptop's tighter quote is the one resting when AAPL moves. Then on the
 exchange: BTNU (clear), BTNC per AAPL print or BTND to play the script,
 BTNR to dump the event log; `python tools/capture.py --port COMn --run mmA`
-followed by `python tools/race.py mmA` prints who got there first.
+followed by `python tools/race.py mmA` prints who got there first, the
+latency percentiles, stale quotes and how many were picked off, and each
+trader's fills, PnL and markout. Pass several runs (`race.py mmA1 mmA2 mmA3`)
+to pool them; one run is only 6 prints.
 
 With `--verbose` the laptop prints each message; after a print you should
 see its own cancel come back as `9 cancel of ... rejected: TOO LATE, already
