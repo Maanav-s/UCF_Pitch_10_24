@@ -14,6 +14,10 @@ Sample lines are <index>,<ticks>; 4294967295 marks a timeout. A comment
 line with the capture time and port is added at the top. At 115200 baud a
 4096-entry dump takes about 5 s.
 
+The two-trader exchange's event dump (rtl/mm/mm_dump.sv, "# mm label=..."
+header, "# steps=..." trailer) is captured the same way; analyze it with
+tools/race.py instead of analyze.py.
+
 Needs pyserial:  python -m pip install pyserial
 
 Usage:
@@ -102,14 +106,15 @@ def main():
             raw, buf = buf.split(b"\n", 1)
             line = raw.decode("ascii", errors="replace").strip()
             if header is None:
-                if not line.startswith("# run "):
+                if not (line.startswith("# run ") or line.startswith("# mm ")):
                     continue  # partial line from before the dump
                 header = line
+                is_mm = line.startswith("# mm ")
                 fields = dict(kv.split("=", 1) for kv in line[2:].split()[1:] if "=" in kv)
-                n_expected = int(fields.get("samples", "0"))
+                n_expected = int(fields.get("samples", fields.get("events", "0")))
                 print(f"  {line}")
             lines.append(line)
-            if line.startswith("# min="):
+            if line.startswith("# min=") or line.startswith("# steps="):
                 break
             if len(lines) % 512 == 1 and len(lines) > 1:
                 print(f"  {len(lines) - 1} / {n_expected} samples", end="\r")
@@ -134,6 +139,12 @@ def main():
         f.write(f"# captured {stamp} from {a.port} at {a.baud} baud\n")
         for l in lines:
             f.write(l + "\n")
+
+    if is_mm:
+        print(f"  {lines[-1]}")
+        print(f"wrote {len(samples)} events to {out}")
+        print(f"next: python tools/race.py {run}")
+        return
 
     ticks_ns = 20
     for kv in header[2:].split()[1:]:
