@@ -94,17 +94,25 @@ module tb_mm_trader
 
   // Clock edges from the one that samples the DUT's rx_valid strobe of frame
   // offset 96 to the one that samples TX_EN high for the first time.
+  // Only bursts that start with a pickoff order are measured: a burst that
+  // starts with a quote waits for the price's BCD conversion first.
   int   t96 = -1;
-  int   lat_min = 1 << 30, lat_max = 0;
+  int   lat_min = 1 << 30, lat_max = 0, n_lat = 0;
   int   cyc = 0;
-  logic tx_en_q = 1'b0;
+  logic tx_en_q = 1'b0, pick_pending = 1'b0;
   always @(posedge clk) begin
     cyc++;
-    if (dut.u_rx.rx_valid && dut.u_rx.rx_offset == 96)
+    if (dut.u_rx.rx_valid && dut.u_rx.rx_offset == 96) begin
       t96 = cyc;
-    if (tx_en && !tx_en_q && t96 >= 0 && cyc - t96 < 50) begin
+      pick_pending = 1'b0;
+    end
+    if (buy || sell)
+      pick_pending = 1'b1;
+    if (tx_en && !tx_en_q && pick_pending) begin
       if (cyc - t96 < lat_min) lat_min = cyc - t96;
       if (cyc - t96 > lat_max) lat_max = cyc - t96;
+      n_lat++;
+      pick_pending = 1'b0;
     end
     tx_en_q = tx_en;
   end
@@ -169,11 +177,13 @@ module tb_mm_trader
     end
     $display("  %0d frames checked; buys %0d, sells %0d, fills %0d, prints %0d, ignored %0d",
              n_exp, n_buys, n_sells, n_fills, n_md, n_ignored);
-    $display("  TX_EN sampled high %0d..%0d clock edges after the rx_valid of offset 96", lat_min, lat_max);
+    $display("  pickoff TX_EN sampled high %0d..%0d clock edges after the rx_valid of offset 96 (%0d bursts)",
+             lat_min, lat_max, n_lat);
     check(n_buys == 2 && n_sells == 3, "pickoff counts");
     check(n_fills == 5, "fills");
     check(n_ignored == 0, "ignored frames");
-    check(lat_min == lat_max && lat_min == 8, "TX_EN does not rise a fixed 8 clocks after offset 96");
+    check(n_lat == 5 && lat_min == lat_max && lat_min == 8,
+          "pickoff TX_EN does not rise a fixed 8 clocks after offset 96");
     if (errors == 0)
       $display("TB_MM_TRADER PASS");
     else

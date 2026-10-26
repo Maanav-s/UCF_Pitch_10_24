@@ -300,18 +300,18 @@ module mm_trader
             end
           end
           MT_ER: begin
-            if (fields.side == CH_BUY && own_bid.valid && own_bid.clordid == fields.clordid) begin
-              if (fields.exectype != CH_NEW)
-                own_bid.valid <= 1'b0;
-              if (fields.exectype == CH_TRADEX)
-                n_fills <= n_fills + 32'd1;
-            end
-            if (fields.side == CH_SELL && own_ask.valid && own_ask.clordid == fields.clordid) begin
-              if (fields.exectype != CH_NEW)
-                own_ask.valid <= 1'b0;
-              if (fields.exectype == CH_TRADEX)
-                n_fills <= n_fills + 32'd1;
-            end
+            // Every report is for one of our orders. A fill is counted even
+            // when the order is no longer the tracked one on its side (a
+            // pickoff order's slot is taken over by the requote that
+            // follows it, before its fill report arrives).
+            if (fields.exectype == CH_TRADEX)
+              n_fills <= n_fills + 32'd1;
+            if (fields.side == CH_BUY && own_bid.valid && own_bid.clordid == fields.clordid
+                && fields.exectype != CH_NEW)
+              own_bid.valid <= 1'b0;
+            if (fields.side == CH_SELL && own_ask.valid && own_ask.clordid == fields.clordid
+                && fields.exectype != CH_NEW)
+              own_ask.valid <= 1'b0;
           end
           default: ;
         endcase

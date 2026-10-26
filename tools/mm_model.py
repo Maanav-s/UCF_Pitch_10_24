@@ -223,13 +223,13 @@ class MarketMaker:
             return []
         if t == "8":
             side, clordid = d[54], int(d[11])
+            if d[150] == "F":
+                self.n_fills += 1   # every report is for one of our orders
             o = self.own.get(side)
             if o is not None and o["clordid"] == clordid:
                 if d[150] == "0":
                     o["active"] = True
                 else:
-                    if d[150] == "F":
-                        self.n_fills += 1
                     self.own[side] = None
             return []
         return []
