@@ -43,12 +43,13 @@ module mm_dump
   localparam logic [7:0] C_LABEL = 8'h01;
   localparam logic [7:0] C_LOOP  = 8'h02;
   localparam logic [7:0] C_NEXT  = 8'h03;
-  // 8'h10 + k: character k;  8'h20 + k: BCD field k;  8'h80 + k: number k
+  // 8'h04 + k: BCD field k;  8'h10 + k: character k;  8'h80 + k: number k.
+  // All codes are control characters, so they cannot collide with the text.
 
   localparam TPL_RAW = {
     "# mm label=", C_LABEL, " tick_ns=", 8'h80, " events=", 8'h81, "\n",
     C_LOOP, 8'h82, ",", 8'h83, ",", 8'h10, "x,", 8'h11, ",", 8'h12, ",", 8'h13, ",",
-    8'h14, ",", 8'h20, ",", 8'h21, ",", 8'h22, "\n", C_NEXT,
+    8'h14, ",", 8'h04, ",", 8'h05, ",", 8'h06, "\n", C_NEXT,
     "# steps=", 8'h84, ",fills=", 8'h85, ",rx_bad=", 8'h86, "\n",
     C_END
   };
@@ -109,9 +110,9 @@ module mm_dump
   logic [3:0]  bcd_ndig;
 
   always_comb begin
-    case (c[3:0])
-      4'd0:    begin bcd_fld = {4'd0, rd_data.clordid}; bcd_ndig = 4'd5; end
-      4'd1:    begin bcd_fld = {4'd0, rd_data.ordid};   bcd_ndig = 4'd5; end
+    case (c)
+      8'h04:   begin bcd_fld = {4'd0, rd_data.clordid}; bcd_ndig = 4'd5; end
+      8'h05:   begin bcd_fld = {4'd0, rd_data.ordid};   bcd_ndig = 4'd5; end
       default: begin bcd_fld = rd_data.price;           bcd_ndig = 4'd6; end
     endcase
   end
@@ -204,7 +205,7 @@ module mm_dump
           end else if (c[7]) begin
             b2b_start <= 1'b1;
             state     <= D_NUM;
-          end else if (c[7:4] == 4'h2) begin
+          end else if (c >= 8'h04 && c <= 8'h06) begin
             d       <= bcd_ndig - 4'd1;
             state   <= D_FLDDIG;
           end else if (c[7:4] == 4'h1) begin

@@ -426,7 +426,7 @@ module mm_exchange
     e.status  = 8'h00;
     e.clordid = f.clordid;
     e.ordid   = (f.mtype == MT_F) ? f.orig : 20'd0;
-    e.price   = f.price;
+    e.price   = (f.mtype == MT_F) ? 24'd0 : f.price;  // a cancel has no price
     return e;
   endfunction
 

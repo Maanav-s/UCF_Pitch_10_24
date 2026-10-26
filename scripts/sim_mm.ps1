@@ -39,11 +39,19 @@ $src = @(
     "sim\mm_tb_port.sv", "sim\$Top.sv"
 ) | ForEach-Object { Join-Path $root $_ }
 
+# glbl: the XPM CDC macros inside xpm_fifo_async reference it.
+$glbl = Join-Path (Split-Path $VivadoBin -Parent) "data\verilog\src\glbl.v"
+if (Get-Command xvlog -ErrorAction SilentlyContinue) {
+    $glbl = Join-Path (Split-Path (Split-Path (Get-Command xvlog).Source -Parent) -Parent) "data\verilog\src\glbl.v"
+}
+
 Set-Location $work
 xvlog -sv -L xpm @src
 if (-not $?) { exit 1 }
+xvlog $glbl
+if (-not $?) { exit 1 }
 # The vectors are read relative to the xsim working directory. The generic
 # must reach cmd.exe still quoted: the .bat wrappers split arguments on "=".
-xelab -L xpm -L unisims_ver -debug typical -generic_top '"VEC_DIR=../mm"' -top $Top -snapshot "${Top}_snap"
+xelab -L xpm -L unisims_ver -debug typical -generic_top '"VEC_DIR=../mm"' -top $Top -top glbl -snapshot "${Top}_snap"
 if (-not $?) { exit 1 }
 xsim "${Top}_snap" -R

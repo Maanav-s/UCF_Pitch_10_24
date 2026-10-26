@@ -232,7 +232,9 @@ module tb_mm_exchange
     check(n_steps == 3, "steps");
     check(n_fills == 2, "fills");
     check(rx_bad_seen, "the ARP and bad-FCS frames were not counted");
-    check(race_valid, "race statistics not valid");
+    // Only port F answers the last print here, so race_valid (both ports)
+    // stays low; the FPGA latency and "first" flag must still be set.
+    check(f_first && lat_f != 0, "FPGA latency of the last print not measured");
     $display("  last print: FPGA %0d clocks, laptop %0d clocks, F first %0d, gap %0d",
              lat_f, lat_l, f_first, gap);
 
