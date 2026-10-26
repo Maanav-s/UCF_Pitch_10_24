@@ -146,9 +146,25 @@ byte enters the TX FIFO, so a trader's "latency" in this log is from the
 exchange's send decision to the exchange's acceptance of the reply, about
 3 µs more than the wire-to-wire time, the same for both traders.
 
-`python tools/race.py <run>` reads a captured dump (`tools/capture.py`) and
-prints, per AAPL print: when the FPGA's first order arrived, when the
-laptop's first message arrived, who was filled, and the gap.
+`python tools/race.py <run> [<run> ...]` reads captured dumps
+(`tools/capture.py`), pools them, and scores the two traders from the log
+alone:
+
+- **Per print**: each trader's first message, the gap, stale quotes and
+  pickoffs, fills, and the laptop's "too late" cancel rejects.
+- **Latency** from the print to each trader's first message, last cancel
+  and last message (its requote), as p50 / p90 / p95 / p99 / max.
+- **Stale quotes**: a resting quote that the new fair puts on the wrong side
+  (bid above fair, ask below). Each one ends picked off or canceled in time;
+  reported with the pick-off rate and the exposure window.
+- **Fills, PnL and markout**: taker and maker fills, position, PnL marked to
+  the last print's fair, and markout per fill against fair at the fill and
+  at the next print (100 shares per fill). Negative markout is an adverse
+  fill.
+
+The script is 6 prints, so one run gives 6 latency samples; for meaningful
+p90 / p95, repeat BTNU, BTND, BTNR and capture a few times (mmA1, mmA2, ...)
+and pass all the runs.
 
 The 7-segment display shows, per `SW[1:0]`: `00` laptop − FPGA gap for the
 last print (µs), `01` FPGA latency, `10` laptop latency, `11` fill count.

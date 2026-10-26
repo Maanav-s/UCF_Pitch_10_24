@@ -92,7 +92,10 @@ Set the FPGA trader's half-spread wider (SW[5:2] = 2, i.e. $2) so the
 laptop's tighter quote is the one resting when AAPL moves. Then on the
 exchange: BTNU (clear), BTNC per AAPL print or BTND to play the script,
 BTNR to dump the event log; `python tools/capture.py --port COMn --run mmA`
-followed by `python tools/race.py mmA` prints who got there first.
+followed by `python tools/race.py mmA` prints who got there first, the
+latency percentiles, stale quotes and how many were picked off, and each
+trader's fills, PnL and markout. Pass several runs (`race.py mmA1 mmA2 mmA3`)
+to pool them; one run is only 6 prints.
 
 With `--verbose` the laptop prints each message; after a print you should
 see its own cancel come back as `9 cancel of ... rejected: TOO LATE, already
